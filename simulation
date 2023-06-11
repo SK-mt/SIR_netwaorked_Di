@@ -1,0 +1,326 @@
+from enum import Enum
+import random
+import math
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import threading
+
+class State(Enum): # 列挙型(enum)
+    I1 = 'Tweeted1'
+    I2 = 'Tweeted2'
+    I3 = 'Tweeted3'
+    S = 'Untweeted'
+    R1 = 'Retweet1'
+    R2 = 'Retweet2'
+    R3 = 'Retweet3'
+    
+class SirModel:
+    def __init__(self, x, y, z, G, list_D):
+        # ネットワーク設定
+        self.network = G
+        self.notzero = list_D
+        
+        # イベントカレンダー
+        self.event_list = {}
+        # 時刻tでの各状態のエージェントリスト
+        self.infection1_nodes = []
+        self.infection2_nodes = []
+        self.infection3_nodes = []
+        self.recovered1_nodes = []
+        self.recovered2_nodes = []
+        self.recovered3_nodes = []
+        # リツイート経験があるエージェントリスト
+        self.experienced_I1_nodes = []
+        self.experienced_I2_nodes = []
+        self.experienced_I3_nodes = []
+        # ある状態のエージェント数のリスト
+        self.I1_list = []
+        self.I2_list = []
+        self.I3_list = []
+        self.R1_list = []
+        self.R2_list = []
+        self.R3_list = []
+        # リツイートしたエージェントの割合
+        self.R1_frac = []
+        self.R2_frac = []
+        self.R3_frac = []
+        # 時刻リスト
+        self.Time = []
+        # グラフの色
+        self.colors = {"Tweeted1": '#B22222', 
+                       "Tweeted2": '#0067C0', 
+                       "Tweeted3": '#FF8C00'}
+        # 初期感染者(x, y, z)
+        self.init_source(x, y, z)
+
+
+    def update_SIR_nums(self, i1, i2, i3, r1, r2, r3):
+        self.I1_list.append(i1)
+        self.I2_list.append(i2)
+        self.I3_list.append(i3)
+        self.R1_list.append(r1)
+        self.R2_list.append(r2)
+        self.R3_list.append(r3)
+        self.R1_frac.append(r1/nx.number_of_nodes(self.network))
+        self.R2_frac.append(r2/nx.number_of_nodes(self.network))
+        self.R3_frac.append(r3/nx.number_of_nodes(self.network))
+    
+    
+    """初期感染者の決定"""
+    def init_source(self, x, y, z):
+        node_list = list(self.network.nodes)
+        # 初期状態は全員"S"
+        for i in node_list:
+            self.network.nodes[i]['state'] = State.S
+        
+        # I1, I2, I3の順にランダムに初期感染者を決定
+        posibility_id1 = random.sample(self.notzero, x)
+        for i in posibility_id1:
+            self.network.nodes[i]['state'] = State.I1
+            self.infection1_nodes.append(i)
+            self.experienced_I1_nodes.append(i)
+            self.event_list[i] = 0
+            self.initialI1 = i
+            
+            posibility_id2 = random.sample(self.notzero, y)
+            for j in posibility_id2:
+                self.network.nodes[j]['state'] = State.I2
+                self.infection2_nodes.append(j)
+                self.experienced_I2_nodes.append(j)
+                self.event_list[j] = 0
+                self.initialI2 = j
+                
+                posibility_id3 = random.sample(self.notzero, z)
+                for k in posibility_id3:
+                    self.network.nodes[k]['state'] = State.I3
+                    self.infection3_nodes.append(k)
+                    self.experienced_I3_nodes.append(k)
+                    self.event_list[k] = 0
+                    self.initialI3 = k
+        
+        self.init_degree = [self.network.degree[self.initialI1], self.network.degree[self.initialI2], self.network.degree[self.initialI3]]
+        
+        self.update_SIR_nums(x, y, z, 0, 0, 0)
+        
+    """シミュレーション開始時の同時拡散"""
+    def prologueI1(self, beta1, gamma):
+        new_I1_num = self.I1_list[-1]
+        new_R1_num = self.R1_list[-1]
+        for neighbor in self.network.neighbors(self.initialI1):
+            if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta1:
+                self.network.nodes[neighbor]['state'] = State.I1
+                self.event_list[neighbor] = 0 + (-np.log(1 - np.random.rand())*(1/gamma))
+                new_I1_num += 1
+                self.infection1_nodes.append(neighbor)
+                self.experienced_I1_nodes.append(neighbor)
+        self.recovered1_nodes.append(self.initialI1)
+        self.infection1_nodes.remove(self.initialI1)
+        self.network.nodes[self.initialI1]['state'] = State.R1
+        self.event_list.pop(self.initialI1)
+        new_R1_num += 1
+        new_I1_num -= 1
+    
+    def prologueI2(self, beta2, gamma):
+        new_I2_num = self.I2_list[-1]
+        new_R2_num = self.R2_list[-1]
+        for neighbor in self.network.neighbors(self.initialI2):
+            if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta2:
+                self.network.nodes[neighbor]['state'] = State.I2
+                self.event_list[neighbor] = 0 + (-np.log(1 - np.random.rand())*(1/gamma))
+                new_I2_num += 1
+                self.infection2_nodes.append(neighbor)
+                self.experienced_I2_nodes.append(neighbor)
+        self.recovered2_nodes.append(self.initialI2)
+        self.infection2_nodes.remove(self.initialI2)
+        self.network.nodes[self.initialI2]['state'] = State.R2
+        self.event_list.pop(self.initialI2)
+        new_R2_num += 1
+        new_I2_num -= 1
+        
+    def prologueI3(self, beta3, gamma):
+        new_I3_num = self.I3_list[-1]
+        new_R3_num = self.R3_list[-1]
+        for neighbor in self.network.neighbors(self.initialI3):
+            if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta3:
+                self.network.nodes[neighbor]['state'] = State.I3
+                self.event_list[neighbor] = 0 + (-np.log(1 - np.random.rand())*(1/gamma))
+                new_I3_num += 1
+                self.infection3_nodes.append(neighbor)
+                self.experienced_I3_nodes.append(neighbor)
+        self.recovered3_nodes.append(self.initialI3)
+        self.infection3_nodes.remove(self.initialI3)
+        self.network.nodes[self.initialI3]['state'] = State.R3
+        self.event_list.pop(self.initialI3)
+        new_R3_num += 1
+        new_I3_num -= 1
+
+    
+    """拡散プロセス"""
+    def spread(self, beta1, beta2, beta3, gamma, rho, T=500):
+        time = 0
+        self.Time.append(time)
+        while len(self.event_list) > 0:
+            if time > T:
+                break
+            # 最新の各ノード数を取得
+            new_I1_num = self.I1_list[-1]
+            new_I2_num = self.I2_list[-1]
+            new_I3_num = self.I3_list[-1]
+            new_R1_num = self.R1_list[-1]
+            new_R2_num = self.R2_list[-1]
+            new_R3_num = self.R3_list[-1]
+            
+            # イベント決定
+            event_node, event_time = min(self.event_list.items(), key=lambda x: x[1])
+            node = event_node
+            self.Time.append(event_time)
+#            event = [event_time, self.network.degree[event_node], self.network.nodes[event_node]['state']]
+#            print(event)
+            
+            if self.network.nodes[node]['state'] == State.I1:
+                for neighbor in self.network.neighbors(node):
+                    if neighbor not in self.experienced_I1_nodes:
+                        if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta1:
+                            self.network.nodes[neighbor]['state'] = State.I1
+                            self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                            new_I1_num += 1
+                            self.infection1_nodes.append(neighbor)
+                            self.experienced_I1_nodes.append(neighbor)
+                        elif self.network.nodes[neighbor]['state'] == State.R2 or self.network.nodes[neighbor]['state'] == State.R3:
+                            if random.random() < beta1*rho:
+                                new_I1_num += 1
+                                self.network.nodes[neighbor]['state'] = State.I1
+                                self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                                self.infection1_nodes.append(neighbor)
+                                self.experienced_I1_nodes.append(neighbor)
+                # retweetが終わり次第すぐにRへ移行
+                self.recovered1_nodes.append(node)
+                self.infection1_nodes.remove(node)
+                self.network.nodes[node]['state'] = State.R1
+                self.event_list.pop(node)
+                new_R1_num += 1
+                new_I1_num -= 1
+                
+            elif self.network.nodes[node]['state'] == State.I2:
+                for neighbor in self.network.neighbors(node):
+                    if neighbor not in self.experienced_I2_nodes:
+                        if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta2:
+                            self.network.nodes[neighbor]['state'] = State.I2
+                            self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                            new_I2_num += 1
+                            self.infection2_nodes.append(neighbor)
+                            self.experienced_I2_nodes.append(neighbor)
+                        elif self.network.nodes[neighbor]['state'] == State.R3 or self.network.nodes[neighbor]['state'] == State.R1:
+                            if random.random() < beta2*rho:
+                                new_I2_num += 1
+                                self.network.nodes[neighbor]['state'] = State.I2
+                                self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                                self.infection2_nodes.append(neighbor)
+                                self.experienced_I2_nodes.append(neighbor)
+                self.recovered2_nodes.append(node)
+                self.infection2_nodes.remove(node)
+                self.event_list.pop(node)
+                self.network.nodes[node]['state'] = State.R2
+                new_R2_num += 1
+                new_I2_num -= 1
+                        
+            elif self.network.nodes[node]['state'] == State.I3:
+                for neighbor in self.network.neighbors(node):
+                    if neighbor not in self.experienced_I3_nodes:
+                        if self.network.nodes[neighbor]['state'] == State.S and random.random() < beta3:
+                            self.network.nodes[neighbor]['state'] = State.I3
+                            self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                            new_I3_num += 1
+                            self.infection3_nodes.append(neighbor)
+                            self.experienced_I3_nodes.append(neighbor)
+                        elif self.network.nodes[neighbor]['state'] == State.R1 or self.network.nodes[neighbor]['state'] == State.R2:
+                            if random.random() < beta3*rho:
+                                new_I3_num += 1
+                                self.network.nodes[neighbor]['state'] = State.I3
+                                self.event_list[neighbor] = time + (-np.log(1 - np.random.rand())*(1/gamma))
+                                self.infection3_nodes.append(neighbor)
+                                self.experienced_I3_nodes.append(neighbor)
+                self.recovered3_nodes.append(node)
+                self.infection3_nodes.remove(node)
+                self.event_list.pop(node)
+                self.network.nodes[node]['state'] = State.R3
+                new_R3_num += 1
+                new_I3_num -= 1
+                        
+            self.update_SIR_nums(new_I1_num, new_I2_num, new_I3_num, new_R1_num, new_R2_num, new_R3_num)
+            time = event_time
+        
+    def result(self):
+        self.result = [len(self.recovered1_nodes), len(self.recovered2_nodes), len(self.recovered3_nodes)]
+        point = 0
+        self.data = [
+                     self.network.degree[self.initialI1], len(self.recovered1_nodes)/81306, '勝敗1',
+                     self.network.degree[self.initialI2], len(self.recovered2_nodes)/81306, '勝敗2',
+                     self.network.degree[self.initialI3], len(self.recovered3_nodes)/81306, '勝敗3',
+                    ]
+        if len(self.recovered1_nodes) >=8131:
+            self.data[2] = '勝ち'
+            point += 1
+        else:
+            self.data[2] = '負け'
+        if len(self.recovered2_nodes) >=8131:
+            self.data[5] = '勝ち'
+            point += 1
+        else:
+            self.data[5] = '負け'
+        if len(self.recovered3_nodes) >=8131:
+            self.data[8] = '勝ち'
+            point += 1
+        else:
+            self.data[8] = '負け'
+        if point == 1:
+            self.data.append('一人勝ち')
+        elif point == 2:
+            self.data.append('一人負け')
+        else:
+            self.data.append('その他')
+        print(self.data)
+        
+        plt.figure(figsize=(5,5))
+        plt.plot(self.Time, self.R1_frac, self.colors[State.I1.value], label=State.R1.value)
+        plt.plot(self.Time, self.R2_frac, self.colors[State.I2.value], label=State.R2.value)
+        plt.plot(self.Time, self.R3_frac, self.colors[State.I3.value], label=State.R3.value)
+        plt.legend()
+        plt.xlabel('time')
+        plt.ylabel('percentage')
+        plt.show()
+        
+if __name__ == '__main__':
+    max_season = 100
+    season = 0
+    beta1 = 0.08
+    beta2 = 0.08
+    beta3 = 0.08
+    gamma = 0.06
+    rho = 0.1
+    x, y, z = 1, 1, 1
+    
+    G = nx.DiGraph()
+    G = nx.read_edgelist('twitter_combined.txt', nodetype=int, create_using=nx.DiGraph)
+    list_D = []
+    for i in list(G.nodes):
+        out = G.out_degree(i)
+        if out > 0:
+            list_D.append(i)
+    
+    csvline1 = "Source1,Total1,VoD1,Source2,Total2,VoD2,Source3,Total3,VoD3,Ending\n"
+    with open("result4.csv" , "a") as f:
+        f.write(csvline1)
+    
+    for season in range(0, max_season):
+        season += 1
+        print("season",season)
+        sir = SirModel(x, y, z, G, list_D)
+        target_list = [sir.prologueI1(beta1, gamma), sir.prologueI2(beta2, gamma), sir.prologueI3(beta3, gamma)]
+        for target in target_list:
+            th = threading.Thread(target=target)
+            th.start()
+            th.join()
+        sir.spread(beta1, beta2, beta3, gamma, rho)
+        sir.result()
